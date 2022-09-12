@@ -1,0 +1,5 @@
+ATLAS_URL=mongodb+srv://activeMeasure_db_user:4rZsVxpk5ccHx0zR@cluster0.u8rwv.mongodb.net/activeMeasure?retryWrites=true&w=majority
+JWT_SECRET=?J35u151h4
+
+TODO:
+Handle mongodb connection error (MongooseServerSelectionError:)
