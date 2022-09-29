@@ -1,4 +1,3 @@
-//TODO: Add functions for the repeative process [systemUser]
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -11,12 +10,10 @@ const mongoose = require('mongoose');
 const _ = require('lodash');
 
 const dashboardData = require('./data/dashboard');
-const systemUsers = require('./data/systemUsers');
+const sysUser = require('./data/sysUser');
+const InventoryItem = require('./data/InventoryItem');
 const companyProfile = require('./data/companyProfile');
 const companyUser = require('./data/companyUser');
-const clientSurvey = require('./data/clientSurvey');
-const surveyTemplate = require('./data/surveyTemplate')
-const clientUsers = require('./data/clientUsers')
 const sendEmail = require('./helper/nodeMailer');
 
 const {
@@ -31,47 +28,14 @@ app.use(cors());
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-
-app.get('/api/p', async(req, res) => {
-  console.log('UrlId:', req.query.surlid)
-  const urlId = req.query.surlid
- try {
-    const clientSurveydetails = await clientSurvey.findOne({
-    urlId: urlId
-  })
-    if(clientSurveydetails) {
-      const todayDate = dayjs().format('DD/MM/YYYY')
-      const surveyEndDate = clientSurveydetails.surveyToDate
-      const surveyType = clientSurveydetails.surveyType
-      const companyName = clientSurveydetails.companyName
-
-      if(dayjs(todayDate).diff(surveyEndDate) == 0 || dayjs(todayDate).diff(surveyEndDate) < 0 ) {
-        res.json({})
-      } else {
-        try {
-          const surveyModel = await surveyTemplate.findOne({ type: surveyType})
-          const surveyObj = Object.assign(surveyModel, {clientName:companyName})
-          console.log(surveyObj)
-          res.json(surveyObj)
-        } catch (error) {
-          console.log(error)
-        }
-      }
-    } else {
-      res.json({})
-    }
-  
- } catch (error) {
-   console.log(error)
- }
-})
-
 app.post('/api/authenticate', async (req, res) => {
   try {
     const { email, password } = req.body;
-    const user = await systemUsers.findOne({
+
+    const user = await sysUser.findOne({
       email
     }).lean();
+
     if (!user) {
       return res.status(403).json({
         message: 'Wrong email or password.'
@@ -84,7 +48,7 @@ app.post('/api/authenticate', async (req, res) => {
     );
 
     if (passwordValid) {
-      const { password, bio, createdBy,createdOn, ...rest } = user;
+      const { password, bio, ...rest } = user;
       const userInfo = Object.assign({}, { ...rest });
 
       const token = createToken(userInfo);
@@ -110,6 +74,7 @@ app.post('/api/authenticate', async (req, res) => {
       .json({ message: 'Something went wrong.' });
   }
 });
+
 
 const attachUser = (req, res, next) => {
   const token = req.headers.authorization;
@@ -170,7 +135,7 @@ const requireAdminOrClientAccess = (req, res, next) => {
 
 const requireAllUserType = (req, res, next) => {
   const { role } = req.user;
-  if (role !== 'admin' && role !== 'clientAccess' && role !== 'agency' && role !== 'corporate') {
+  if (role !== 'admin' && role !== 'clientAccess' && role !== 'HRUser') {
     return res
       .status(401)
       .json({ message: 'Request not authorized' });
@@ -178,20 +143,17 @@ const requireAllUserType = (req, res, next) => {
   next();
 };
 
-const requireCorporateOrAgency = (req, res, next) => {
+const requireCompanyUserHR = (req, res, next) => {
   const { role } = req.user;
-  if (role !== 'corporate' || role !== 'agency') {
+  if (role !== 'companyUserHR') {
     return res
       .status(401)
       .json({ message: 'Request not authorized' });
   }
   next();
 };
-
-app.get('/api/dashboard-data', requireAuth, (req, res) =>{
-  //console.log("dashboardData",dashboardData)
+app.get('/api/dashboard-data', requireAuth, (req, res) =>
   res.json(dashboardData)
-}
 );
 
 // app.patch('/api/user-role', async (req, res) => {
@@ -232,8 +194,8 @@ app.post('/api/allcompanies',
       } else { 
       const companyArray = await companyProfile.find();
       const companies = companyArray.reverse()
-      // console.log('!!!!!!!!!!')
-      // console.log(companies)
+      console.log('!!!!!!!!!!')
+      console.log(companies)
         res.status(200).json({ companies })
       }
 
@@ -244,77 +206,33 @@ app.post('/api/allcompanies',
   }
 );
 
-app.post('/api/getSurveyDetails',
-  requireAuth,
-  requireAllUserType,
-  async (req, res) => {
-    console.log('<=::::::::=>')
-    let clientSurveydetails
-    if (_.has(req.body, 'agentId')) {
-      const { agentId } = req.body
-      clientSurveydetails = await clientSurvey.find({
-        agentId: agentId
-      })
-    } else if(_.has(req.body, 'companyId')) {
-      const { companyId } = req.body
-      console.log('companyId:', companyId)
-      clientSurveydetails = await clientSurvey.find({
-        companyId: companyId
-      })
-    } else {
-      clientSurveydetails = await clientSurvey.find({})
-    }
-   try { 
-      const todayDate = dayjs().format('DD/MM/YYYY')
-      const surveyEndDate = clientSurveydetails.surveyToDate
-      if(dayjs(todayDate).diff(surveyEndDate) == 0) {
-        console.log('No valid Link')
-        res.json({})
-      } else {
-        try {
-          console.log(clientSurveydetails)
-          res.json(clientSurveydetails)
-        } catch (error) {
-          console.log(error)
-        }
-      }
-    
-   } catch (error) {
-     console.log(error)
-   }
-  }
-);
-
 app.post('/api/updateCompanyProfile',
   requireAuth,
   requireAdminOrClientAccess,
   async (req, res) => {
     let existingEmail = false;
-    const modifiedOn = dayjs().format("DD/MM/YYYY")
     const { companyId } = req.body;
-    const { companyName, contact, exporterEmail, type, address, modifiedBy } = req.body
+    const { companyName, contact, email, town, address } = req.body
     const companyProfileUpdate = {}
-    companyProfileUpdate.modifiedBy = modifiedBy
-    companyProfileUpdate.modifiedOn = modifiedOn
-    //console.log(req.body)
+    console.log(req.body)
     if (companyName !== '') {
       companyProfileUpdate.companyName = companyName
-    } if(contact !== ''){
+    } if(contact !==''){
       companyProfileUpdate.contact = contact
-    } if(exporterEmail !== ''){
+    } if(email !==''){
         const isEmail = await companyProfile.findOne({
-          exporterEmail: exporterEmail.toLowerCase()
+        email: email.toLowerCase()
         });
         if(isEmail) {
           existingEmail = true;
         }
-      companyProfileUpdate.exporterEmail = exporterEmail
-    } if(type !== ''){
-      companyProfileUpdate.clientType = type
+      companyProfileUpdate.email = email
+    } if(town !==''){
+      companyProfileUpdate.town = town
     } if(address !== ''){
       companyProfileUpdate.address = address
     }
-    //console.log(companyProfileUpdate)
+    console.log(companyProfileUpdate)
     try {
         if(existingEmail) {
           return res.status(300).json({ message: 'Email already exists' });
@@ -338,19 +256,18 @@ app.post('/api/addCompanyUser',
   requireAdminOrClientAccess,
   async(req, res) => {
     try {
-      
+      const userId = req.user.sub;
       const { 
         firstName, 
         lastName, 
         email, 
         phoneNumber,
-        companyId,
-        companyName,
-        createdBy,
-        role
+        Nrc,
+        employerId,
+        employerName 
         } = req.body
         
-      const existingEmail = await systemUsers.findOne({
+      const existingEmail = await companyUser.findOne({
       email: email
       }).lean();
 
@@ -370,21 +287,21 @@ app.post('/api/addCompanyUser',
           lastName,
           email: email.toLowerCase(),
           phoneNumber,
-          companyId,
-          companyName,
+          Nrc,
+          employerId,
+          employerName,
           createdOn: dayjs().format("DD/MM/YYYY"),
-          createdBy,
-          role,
+          createdBy : userId,
           password: hashedtOtp,
           otpState:1,
-          userState: 'active',
+          status: 'pending',
         };
         
-        const newUserClient = new systemUsers(userClientData);
+        const newUserClient = new companyUser(userClientData);
         const saveUserClient = await newUserClient.save();
 
         if (saveUserClient) {
-          sendEmail(email, 'OTP', `The OTP is ${otp}, Please login and update by creating a new password.\n\nBipData Team'}`)
+          sendEmail(email, 'OTP', `The OTP is ${otp}, Please login and update by creating a new PIN. Get Youllet app here ${'https://drive.google.com/file/d/1kYh3FIyG0zz1r8enY6cMlweQkrFKH8kO/view?usp=sharing'}`)
           return res.json({
             message: 'Client Created successfully'
           }) 
@@ -408,7 +325,7 @@ app.post('/api/addCompanyUser',
     const { companyUserId } = req.body;
     const { firstName, lastName, email, phoneNumber, Nrc } = req.body
     const companyUserProfileUpdate = {}
-    //console.log(req.body)
+    console.log(req.body)
     if (firstName !== '') {
       companyUserProfileUpdate.firstName = firstName
     } if(lastName !==''){
@@ -426,7 +343,7 @@ app.post('/api/addCompanyUser',
     } if(Nrc !== ''){
       companyUserProfileUpdate.Nrc = Nrc
     }
-    //console.log(companyUserProfileUpdate)
+    console.log(companyUserProfileUpdate)
     try {
         if(existingEmail) {
           return res.status(300).json({ message: 'Email already exists' });
@@ -446,7 +363,7 @@ app.post('/api/addCompanyUser',
 );
 
 app.post('/api/getCompanyUserProfile',requireAuth, requireAdminOrClientAccess, async(req, res) => {
-    //console.log(req.body)
+    console.log(req.body)
     try {
       const { companyUserId } = req.body;
       //console.log(res)
@@ -463,14 +380,10 @@ app.post('/api/addCompany',
   requireAuth,
   requireAdminOrClientAccess,
   async (req, res) => {
+    //console.log(req)name
     
     try {
-      let parentAgency = null
-      const {
-        companyName,
-        clientType
-      } = req.body
-
+      const {companyName} = req.body
       let isCompanyNameExist = await companyProfile.findOne({
         companyName: companyName
       }).lean();
@@ -479,23 +392,20 @@ app.post('/api/addCompany',
         return res.status(300)
         .json({ message: 'Company already exists' });
       }
-      if (clientType == 'agency') {
-         parentAgency = clientType
-      }
-      const input = await Object.assign({}, req.body, 
-        {
-          createdOn: dayjs().format("DD/MM/YYYY")
-        },
-        {
-          parentAgency: parentAgency
-        }
-      );        
-        const addCompanyProfile = new companyProfile(input);
-        await addCompanyProfile.save();
-          res.status(201).json({
-          message: 'company profile created!',
-          addCompanyProfile
-        });     
+      const userId = req.user.sub;
+      // const companyName = req.body
+
+      const input = await Object.assign({}, req.body, {
+        createdBy: userId }, {createdOn: dayjs().format("DD/MM/YYYY")}
+        );
+        
+        console.log(input);
+      const addCompanyProfile = new companyProfile(input);
+      await addCompanyProfile.save();
+      res.status(201).json({
+        message: 'company profile created!',
+        addCompanyProfile
+      });
     } catch (err) {
       console.log(err)
       return res.status(400).json({
@@ -504,14 +414,13 @@ app.post('/api/addCompany',
     }
   }
 );
-
 app.post('/api/getCompanyProfile',
   requireAuth,
   requireAdminOrClientAccess,
   async (req, res) => {
     try {
       const {companyId} = req.body;
-      //console.log(companyId)
+      console.log(companyId)
       const companyProfileArray = await companyProfile.find({ _id: companyId });
       //console.log(companyProfileArray)
       res.json({companyProfileArray});
@@ -521,65 +430,69 @@ app.post('/api/getCompanyProfile',
   }
 );
 
-app.post('/api/addSysUser', 
+app.post('/api/getCountCompanyHasNoHR',
   requireAuth,
-  requireAdmin,
-  async(req, res) => {
+  requireAdminOrClientAccess,
+  async (req, res) => {
     try {
-      const { 
-        firstName, 
-        lastName, 
-        email, 
-        phoneNumber,
-        createdBy, 
-        role } = req.body
-        
-        const otp = randomstring.generate(
-          {
-            length:5, 
-            charset:'alphabetic'
-          })
-         console.log('@@@@ OTP @@@@')
-         console.log(otp)
-        const hashedtOtp = await hashPassword(otp)
-        const systemUsersData = {
-          firstName,
-          lastName,
-          email: email.toLowerCase(),
-          phoneNumber,
-          createdOn: dayjs().format("DD/MM/YYYY"),
-          createdBy,
-          role,
-          password: hashedtOtp,
-          otpState:1,
-          userState: 'active'
-        };
-      const existingEmail = await systemUsers.findOne({
-        email: systemUsersData.email
-      }).lean();
-
-      if(existingEmail) {
-        return res.status(400)
-        .json({ message: 'Email already exists' });
+      if (_.has(req.body, 'createdBy')) {
+        const {createdBy} = req.body;
+        const companyProfileArray = await companyProfile.find({ hasHRUser: false }, {createdBy: createdBy});
+        const arrCount = companyProfileArray.length
+        res.json({arrCount});
+      } 
+      else {
+        console.log('**************')
+        console.log('getCountCompanyHasNoHR')
+        const companyProfileArray = await companyProfile.find({ hasHRUser: false });
+        const arrCount = companyProfileArray.length
+        res.json({arrCount});
       }
-
-      const newSysUser = new systemUsers(systemUsersData);
-      const saveUserAuth = await newSysUser.save();
-
-      if (saveUserAuth) {
-        sendEmail(email, 'OTP', `The OTP is ${otp}, Please login and update by creating a new password`)
-        return res.json({
-          message: 'User Created successfully'
-        }) 
-      }
-    } catch (error) {
-      console.log(error)
-      return res.status(400).json({
-        message: 'There was a problem creating your account'
-      })
+      
+    } catch (err) {
+      return res.status(400).json({ error: err });
     }
+  }
+);
 
-  })
+app.post('/api/allcompaniesHR',
+  requireAuth,
+  requireAdminOrClientAccess,
+  async (req, res) => {
+    try {
+      if (_.has(req.body, 'createdBy')) {
+        const {createdBy} = req.body
+        const companyWithoutHRArray = await companyProfile.find({createdBy: createdBy,hasHRUser: false}).lean().select('_id companyName ');
+        const companyWithHRArray = await sysUser
+          .find({ role: "HRUser" }, { createdBy: createdBy })
+          .lean()
+          .select(
+            "_id firstName lastName companyId companyName userState phoneNumber email createdOn"
+          );
+        const companiesWithoutHR = companyWithoutHRArray.reverse();
+        const companiesWithHR = companyWithHRArray.reverse();
+        const companies = [...companiesWithoutHR, ...companiesWithHR];
+        console.log('00000000')
+        console.log(companies)
+        res.status(200).json({ companies })
+
+      } else { 
+        const companyWithoutHRArray = await companyProfile.find({hasHRUser: false}).lean().select('_id companyName ');
+        const companyWithHRArray = await sysUser.find({role: 'HRUser'}).lean().select('_id firstName lastName companyId companyName userState phoneNumber email createdOn');
+        const companiesWithoutHR = companyWithoutHRArray.reverse();
+        const companiesWithHR = companyWithHRArray.reverse();
+        const companies = [...companiesWithoutHR, ...companiesWithHR];
+        console.log('00000000');
+        console.log(companies);
+        res.status(200).json({ companies });
+      }
+
+    } catch (err) {
+      console.log(err)
+      return res.status(400).json({ error: err });
+    }
+  }
+);
 
 app.post('/api/addHRUser', 
   requireAuth,
@@ -619,7 +532,7 @@ app.post('/api/addHRUser',
           companyName
 
         };
-      const existingEmail = await systemUsers.findOne({
+      const existingEmail = await sysUser.findOne({
         email: HRUserData.email
       }).lean();
 
@@ -628,7 +541,7 @@ app.post('/api/addHRUser',
         .json({ message: 'Email already exists' });
       }
 
-      const newSysUser = new systemUsers(HRUserData);
+      const newSysUser = new sysUser(HRUserData);
       const saveUserAuth = await newSysUser.save();
 
       if (saveUserAuth) {
@@ -651,17 +564,17 @@ app.post('/api/addHRUser',
   })
 
 app.post('/api/getCompanyHRUserProfile',requireAuth, requireAdminOrClientAccess, async(req, res) => {
-  // console.log('editHRUder++++++')  
-  // console.log(req.body)
+  console.log('editHRUder++++++')  
+  console.log(req.body)
     try {
       const { HRUserId } = req.body;
       if(_.has(req.body, 'createdBy')){
         const {createdBy} = req.body
-        const companyHRUserProfileArray = await systemUsers.find({_id: HRUserId}, {createdBy: createdBy}).lean().select('_id firstName lastName  phoneNumber email');
+        const companyHRUserProfileArray = await sysUser.find({_id: HRUserId}, {createdBy: createdBy}).lean().select('_id firstName lastName  phoneNumber email');
         return res.status(200).json({companyHRUserProfileArray});
      
       } else {
-        const companyHRUserProfileArray = await systemUsers.find({_id: HRUserId}).lean().select('_id firstName lastName  phoneNumber email');
+        const companyHRUserProfileArray = await sysUser.find({_id: HRUserId}).lean().select('_id firstName lastName  phoneNumber email');
         return res.status(200).json({companyHRUserProfileArray});
       }
       
@@ -677,16 +590,16 @@ app.post('/api/updateCompanyHRUserProfile',
   requireAdminOrClientAccess,
   async (req, res) => {
     let existingEmail = false;
-    const { systemUsersId } = req.body;
+    const { sysUserId } = req.body;
     const { firstName, lastName, email, phoneNumber } = req.body
     const companyHRUserProfileUpdate = {}
-    //console.log(req.body)
+    console.log(req.body)
     if (firstName !== '') {
       companyHRUserProfileUpdate.firstName = firstName
     } if(lastName !==''){
       companyHRUserProfileUpdate.lastName = lastName
     } if(email !==''){
-      const isEmail = await systemUsers.findOne({
+      const isEmail = await sysUser.findOne({
           email: email.toLowerCase()
         });
         if(isEmail) {
@@ -696,13 +609,13 @@ app.post('/api/updateCompanyHRUserProfile',
     } if(phoneNumber !==''){
       companyHRUserProfileUpdate.phoneNumber = phoneNumber
     }
-    //console.log(companyHRUserProfileUpdate)
+    console.log(companyHRUserProfileUpdate)
     try {
         if(existingEmail) {
           return res.status(403).json({ message: 'Email already exists' });
         }
-          await systemUsers.findOneAndUpdate(
-          {_id: systemUsersId},         
+          await sysUser.findOneAndUpdate(
+          {_id: sysUserId},         
            companyHRUserProfileUpdate,
            {new: true}  
         );
@@ -715,15 +628,73 @@ app.post('/api/updateCompanyHRUserProfile',
   }
 );
 
+app.post('/api/addSysUser', 
+  //requireAuth,
+  //requireAdmin,
+  async(req, res) => {
+    try {
+      const { 
+        firstName, 
+        lastName, 
+        email, 
+        phoneNumber,
+        createdBy, 
+        role } = req.body
+        
+        const otp = randomstring.generate(
+          {
+            length:5, 
+            charset:'alphabetic'
+          })
+        // console.log('@@@@ OTP @@@@')
+        // console.log(otp)
+        const hashedtOtp = await hashPassword(otp)
+        const sysUserData = {
+          firstName,
+          lastName,
+          email: email.toLowerCase(),
+          phoneNumber,
+          createdOn: dayjs().format("DD/MM/YYYY"),
+          createdBy,
+          role,
+          password: hashedtOtp,
+          otpState:1,
+          userState: 'active'
+        };
+      const existingEmail = await sysUser.findOne({
+        email: sysUserData.email
+      }).lean();
 
+      if(existingEmail) {
+        return res.status(400)
+        .json({ message: 'Email already exists' });
+      }
+
+      const newSysUser = new sysUser(sysUserData);
+      const saveUserAuth = await newSysUser.save();
+
+      if (saveUserAuth) {
+        sendEmail(email, 'OTP', `The OTP is ${otp}, Please login and update by creating a new password`)
+        return res.json({
+          message: 'User Created successfully'
+        }) 
+      }
+    } catch (error) {
+      console.log(error)
+      return res.status(400).json({
+        message: 'There was a problem creating your account'
+      })
+    }
+
+  })
 
 app.post('/api/getSystemUsers',requireAuth, requireAdmin, async(req, res) => {
 
     const { userId } = req.body
-    //console.log(userId) 
+    console.log(userId) 
     try {
-      const systemUsersArray = await systemUsers.find({_id: { $ne: userId }}).lean().select('_id firstName lastName role userState createdBy createdOn phoneNumber email');
-      const SystemUsers = systemUsersArray.reverse()
+      const sysUserArray = await sysUser.find({_id: { $ne: userId }}).lean().select('_id firstName lastName role userState createdBy createdOn phoneNumber email');
+      const SystemUsers = sysUserArray.reverse()
         return res.status(200).json({SystemUsers});
      
     } catch (err) {
@@ -733,12 +704,12 @@ app.post('/api/getSystemUsers',requireAuth, requireAdmin, async(req, res) => {
   })
 
   app.post('/api/getSystemUserProfile',requireAuth, requireAdmin, async(req, res) => {
-    //console.log(req.body)
+    console.log(req.body)
     try {
-      const { systemUsersId } = req.body;
+      const { sysUserId } = req.body;
       //console.log(res)
-      const systemUsersProfileArray = await systemUsers.find({_id: systemUsersId}).lean().select('_id firstName lastName  phoneNumber email');
-        return res.status(200).json({systemUsersProfileArray});
+      const sysUserProfileArray = await sysUser.find({_id: sysUserId}).lean().select('_id firstName lastName  phoneNumber email');
+        return res.status(200).json({sysUserProfileArray});
      
     } catch (err) {
       console.log(err)
@@ -751,33 +722,33 @@ app.post('/api/updateSysUserProfile',
   requireAdmin,
   async (req, res) => {
     let existingEmail = false;
-    const { systemUsersId } = req.body;
+    const { sysUserId } = req.body;
     const { firstName, lastName, email, phoneNumber } = req.body
-    const systemUsersProfileUpdate = {}
-    //console.log(req.body)
+    const sysUserProfileUpdate = {}
+    console.log(req.body)
     if (firstName !== '') {
-      systemUsersProfileUpdate.firstName = firstName
+      sysUserProfileUpdate.firstName = firstName
     } if(lastName !==''){
-      systemUsersProfileUpdate.lastName = lastName
+      sysUserProfileUpdate.lastName = lastName
     } if(email !==''){
-      const isEmail = await systemUsers.findOne({
+      const isEmail = await sysUser.findOne({
           email: email.toLowerCase()
         });
         if(isEmail) {
           existingEmail = true;
         }
-      systemUsersProfileUpdate.email = email
+      sysUserProfileUpdate.email = email
     } if(phoneNumber !==''){
-      systemUsersProfileUpdate.phoneNumber = phoneNumber
+      sysUserProfileUpdate.phoneNumber = phoneNumber
     }
-    //console.log(systemUsersProfileUpdate)
+    console.log(sysUserProfileUpdate)
     try {
         if(existingEmail) {
           return res.status(300).json({ message: 'Email already exists' });
         }
-          await systemUsers.findOneAndUpdate(
-          {_id: systemUsersId},         
-           systemUsersProfileUpdate,
+          await sysUser.findOneAndUpdate(
+          {_id: sysUserId},         
+           sysUserProfileUpdate,
            {new: true}  
         );
         res.status(200).json({ message: 'Updated Successfully' })
@@ -789,29 +760,6 @@ app.post('/api/updateSysUserProfile',
   }
 );
 
-app.post('/api/setSurvey',
-  requireAuth, 
-  requireAdminOrClientAccess,
-  async(req, res) => {
-    //TODO: Put url in .env
-    try {
-     
-      console.log("surveyDetails", req.body)
-      const urlId = randomstring.generate({ length:10, charset:'alphabetic'})
-      const surveyDetails  = await Object.assign( req.body , {urlId: urlId})
-      const newSurvey = new clientSurvey(surveyDetails)
-      const addSurvey = await newSurvey.save()
-      if (addSurvey) {
-        //TODO: send email to the client after creating a survey
-        //sendEmail(email, 'OTP', `The OTP is ${otp}, Please login and update by creating a new password.\n\nBipData Team'}`)
-        res.json({message: "Survey Created Successfully"})
-      }
-      
-      } catch (error) {
-        console.log(error)
-      }
-    }
-  );
 
 
 app.delete(
@@ -858,22 +806,22 @@ app.post(
   async(req, res) => {
     try {
       const { companyId } = req.body;
-      //console.log(companyId)
+      console.log(companyId)
       const { role } = req.body;
-      //console.log(role)
-      if (role === 'clientAccess') {
+      console.log(role)
+      if (role === 'HRUser') {
         const companyUsersArray = await companyUser.find({
           employerId: companyId
-          }).lean().select('firstName lastName email phoneNumber createdOn status ');
+          }).lean().select('firstName lastName email phoneNumber Nrc createdOn status ');
         const companyUsers = companyUsersArray.reverse();
         res.json({ companyUsers })
-      } else if (role === 'admin'){    
+      } else if (role === 'clientAccess'){    
         const companyUsersArray = await companyUser.find({
         employerId: companyId
-          }).lean().select('firstName lastName email phoneNumber createdBy status createdOn otpState');
+          }).lean().select('firstName lastName email phoneNumber Nrc createdBy status createdOn otpState');
         const companyUsers = companyUsersArray.reverse();
-        // console.log('UUUUUUUUUU')
-         //console.log(companyUsers)
+        console.log('UUUUUUUUUU')
+        console.log(companyUsers)
         res.json({ companyUsers })
       } else {
 

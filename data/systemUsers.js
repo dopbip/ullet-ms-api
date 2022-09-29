@@ -16,4 +16,4 @@ const systemUsersModel = new Schema({
   companyName: {type: String, require:true, default: null}
 });
 
-module.exports = mongoose.model('systemusers', systemUsersModel);
+module.exports = mongoose.model('sysusers', systemUsersModel);

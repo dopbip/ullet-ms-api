@@ -14,7 +14,7 @@ const createToken = user => {
       iss: 'api.youllet.app',
       aud: 'api.youllet.app'
     },
-    process.env.JWT_SECRET,
+     '?J35u151h4',            //process.env.JWT_SECRET,
     { algorithm: 'HS256', expiresIn: '1h' }
   );
 };
